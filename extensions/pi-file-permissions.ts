@@ -265,6 +265,7 @@ function buildSystemPromptNotice(rules: PermissionRules): string {
     "",
     "Everything in the current project folder and ~/.pi is always accessible.",
     "Everything else is denied.",
+    "When searching for a file, you MUST search ALL domains that have find permission, not just some of them. Do not skip a domain just because it lacks read or write permission.",
     "If a tool reports a permission restriction, NEVER try a workaround via bash, alternate tools, broader parent directories, globbing, or search/discovery commands.",
     "Stop immediately and report the limitation instead.",
   ].join("\n");
