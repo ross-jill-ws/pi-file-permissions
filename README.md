@@ -61,13 +61,17 @@ domains:
     permissions: [read, write, edit, find, grep, ls]
   - path: /Users/me/projects/backend
     permissions: [read, find, grep, ls]
-  - path: /Users/me/data/reports
+  - path: ~/data/reports
     permissions: [read]
-  - path: /Users/me/workspace/experiments/**
-    permissions: [find, ls]
+  - path: ./local-docs
+    permissions: [read, find, ls]
 ```
 
-Paths support trailing wildcards (`/**`, `/*`) which are stripped automatically — `path: /foo/bar/**` is treated the same as `path: /foo/bar`, meaning the directory itself and everything under it is included.
+Each `path` must be a path to a folder or file. The domain covers the path itself and everything under it. Paths can be:
+
+- **Absolute** — `/Users/me/projects/frontend`
+- **Relative** — `./local-docs` (resolved against project root)
+- **Home directory** — `~/data/reports` (expands `~` to `$HOME`)
 
 ### Rules
 
@@ -75,7 +79,6 @@ Paths support trailing wildcards (`/**`, `/*`) which are stripped automatically 
 - **No config file** — everything is allowed, pi runs normally with no modifications
 - **Project root (cwd)** — always has full permission regardless of config
 - **`~/.pi`** — always has full permission (pi's own config directory)
-- **Wildcards supported** — trailing `/**` and `/*` are accepted and stripped; paths always mean "this directory and everything under it"
 - **Most specific wins** — if a path matches multiple domains, the longest (most specific) path takes precedence
 
 ### Available Permissions

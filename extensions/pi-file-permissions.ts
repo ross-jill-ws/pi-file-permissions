@@ -129,11 +129,16 @@ async function loadRules(cwd: string): Promise<LoadedRules> {
         throw new Error("Each domain must have a 'path' string");
       }
 
-      // Strip trailing glob patterns — paths are always treated as directory prefixes
-      const cleanPath = entry.path.replace(/\/\*\*$/, "").replace(/\/\*$/, "");
+      // Expand ~ to home directory, resolve relative paths against cwd
+      let resolvedPath = entry.path.trim();
+      if (resolvedPath.startsWith("~/") || resolvedPath === "~") {
+        resolvedPath = path.join(os.homedir(), resolvedPath.slice(1));
+      } else if (!path.isAbsolute(resolvedPath)) {
+        resolvedPath = path.resolve(cwd, resolvedPath);
+      }
 
       domains.push({
-        path: normalizePath(cleanPath),
+        path: normalizePath(resolvedPath),
         raw: entry.path,
         permissions: validatePermissions(entry.permissions, entry.path),
       });
