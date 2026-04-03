@@ -29,6 +29,10 @@ By default, all enabled tools have unrestricted access to the filesystem. This e
 
 This extension is designed to do one simple thing: **restrict which paths the LLM's tools can access**. If you don't provide a `file-permissions.yaml` in your project root, nothing happens — pi runs completely normally.
 
+### Why This Matters
+
+Pi's LLM often aggressively searches for files — sometimes scanning from `$HOME` or traversing large directory trees — which can be slow and wasteful. More importantly, when building **focused agents** or **multi-agent systems**, setting clear boundaries on which files each agent can access is critical. You want to define exactly which paths are read-only, which are editable, and which are completely off-limits. This prevents agents from stepping on each other's work and keeps each agent scoped to its responsibility.
+
 Permission control is enforced at three levels:
 
 ### 1. System Prompt
