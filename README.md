@@ -87,14 +87,14 @@ description: >
   Fullstack developer. Builds UI components and API integrations.
 systemPrompt: >
   You are a senior fullstack developer.
-domain:
+domains:
   - path: /Users/me/projects/frontend
     permissions: [read, write, edit, find, grep, ls]
   - path: /Users/me/projects/shared-lib
     permissions: [read, find, grep]
 ```
 
-The `domain` array follows exactly the same structure as the `domains` array in `file-permissions.yaml`. `file-permissions.yaml` takes priority if both files are present.
+The `domains` array follows exactly the same structure as in `file-permissions.yaml`. `file-permissions.yaml` takes priority if both files are present.
 
 ### Rules
 

@@ -56,6 +56,8 @@ type Domain = {
   raw: string;
   /** Set of allowed tool names for this domain */
   permissions: Set<GuardedToolName>;
+  /** Inline YAML comment on the path line, e.g. `# all my agent projects` */
+  comment?: string;
 };
 
 type PermissionRules = {
@@ -109,9 +111,59 @@ function validatePermissions(perms: unknown, domainPath: string): Set<GuardedToo
   return result;
 }
 
-function parseRawDomains(rawDomains: RawDomain[], cwd: string): Domain[] {
+/**
+ * Extract inline comments from YAML domain entries.
+ * Returns one string per domain entry (empty string if no comment).
+ * Looks for a trailing comment on the `path:` value line, e.g.:
+ *   - path: ~/foo   # all my recent agent projects
+ */
+function extractDomainComments(raw: string, domainsKeyName: string): string[] {
+  const comments: string[] = [];
+  try {
+    const doc = YAML.parseDocument(raw);
+    const root = doc.contents;
+    if (!YAML.isMap(root)) return comments;
+
+    for (const topPair of root.items) {
+      if (
+        !YAML.isPair(topPair) ||
+        !YAML.isScalar(topPair.key) ||
+        (topPair.key as { value: unknown }).value !== domainsKeyName
+      ) continue;
+
+      const seq = topPair.value;
+      if (!YAML.isSeq(seq)) break;
+
+      for (const item of seq.items) {
+        let comment = "";
+        if (YAML.isMap(item)) {
+          for (const domainPair of item.items) {
+            if (
+              YAML.isPair(domainPair) &&
+              YAML.isScalar(domainPair.key) &&
+              (domainPair.key as { value: unknown }).value === "path" &&
+              YAML.isScalar(domainPair.value)
+            ) {
+              const c = (domainPair.value as { comment?: string }).comment;
+              if (c) comment = c.trim();
+              break;
+            }
+          }
+        }
+        comments.push(comment);
+      }
+      break;
+    }
+  } catch {
+    // comments are best-effort; ignore errors
+  }
+  return comments;
+}
+
+function parseRawDomains(rawDomains: RawDomain[], cwd: string, comments: string[] = []): Domain[] {
   const domains: Domain[] = [];
-  for (const entry of rawDomains) {
+  for (let i = 0; i < rawDomains.length; i++) {
+    const entry = rawDomains[i];
     if (typeof entry !== "object" || entry === null || typeof entry.path !== "string") {
       throw new Error("Each domain must have a 'path' string");
     }
@@ -128,6 +180,7 @@ function parseRawDomains(rawDomains: RawDomain[], cwd: string): Domain[] {
       path: normalizePath(resolvedPath),
       raw: entry.path,
       permissions: validatePermissions(entry.permissions, entry.path),
+      comment: comments[i] || undefined,
     });
   }
   return domains;
@@ -148,9 +201,10 @@ async function loadRules(cwd: string): Promise<LoadedRules> {
       throw new Error("Expected a 'domains' array in config");
     }
 
+    const comments = extractDomainComments(raw, "domains");
     return {
       fingerprint: raw,
-      rules: { configPath, domains: parseRawDomains(parsed.domains, cwd) },
+      rules: { configPath, domains: parseRawDomains(parsed.domains, cwd, comments) },
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -158,7 +212,7 @@ async function loadRules(cwd: string): Promise<LoadedRules> {
     }
   }
 
-  // 2. Fall back to persona.yaml (pi-teammate) — check for a `domain` array
+  // 2. Fall back to persona.yaml (pi-teammate) — check for a `domains` array
   const personaPath = path.join(cwd, PERSONA_RELATIVE_PATH);
   try {
     const raw = await readFile(personaPath, "utf8");
@@ -168,13 +222,14 @@ async function loadRules(cwd: string): Promise<LoadedRules> {
       return { rules: null, fingerprint: null };
     }
 
-    if (!Array.isArray(parsed.domain)) {
+    if (!Array.isArray(parsed.domains)) {
       return { rules: null, fingerprint: null };
     }
 
+    const comments = extractDomainComments(raw, "domains");
     return {
       fingerprint: raw,
-      rules: { configPath: personaPath, domains: parseRawDomains(parsed.domain as RawDomain[], cwd) },
+      rules: { configPath: personaPath, domains: parseRawDomains(parsed.domains as RawDomain[], cwd, comments) },
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -281,10 +336,14 @@ function configLabel(rules: PermissionRules): string {
   return base === "persona.yaml" ? `${base} (domain)` : base;
 }
 
+function domainLabel(domain: Domain): string {
+  return domain.comment ? `${domain.raw}  # ${domain.comment}` : domain.raw;
+}
+
 function buildPermissionSummary(rules: PermissionRules): string {
   const lines = [`File permissions active from ${configLabel(rules)}:`];
   for (const domain of rules.domains) {
-    lines.push(`  ${domain.raw} → [${[...domain.permissions].join(", ")}]`);
+    lines.push(`  ${domainLabel(domain)} → [${[...domain.permissions].join(", ")}]`);
   }
   lines.push("Everything not listed is denied.");
   return lines.join("\n");
@@ -292,7 +351,7 @@ function buildPermissionSummary(rules: PermissionRules): string {
 
 function buildSystemPromptNotice(rules: PermissionRules): string {
   const domainLines = rules.domains.map(
-    (d) => `- ${d.raw}: ${[...d.permissions].join(", ")}`
+    (d) => `- ${domainLabel(d)}: ${[...d.permissions].join(", ")}`
   );
 
   return [
@@ -315,7 +374,7 @@ function buildToolDescription(baseDesc: string, toolName: GuardedToolName, rules
     return `${baseDesc} This tool is not permitted on any configured path.`;
   }
 
-  const paths = matching.map((d) => d.raw).join(", ");
+  const paths = matching.map((d) => domainLabel(d)).join(", ");
   return `${baseDesc} Allowed paths: ${paths}. All other paths are denied. If denied, stop and report the restriction. Never use bash as a workaround.`;
 }
 
@@ -328,7 +387,7 @@ function createPromptGuidelines(toolName: GuardedToolName, rules: PermissionRule
   ];
 
   if (matching.length > 0) {
-    guidelines.push(`Allowed: ${matching.map((d) => d.raw).join(", ")}`);
+    guidelines.push(`Allowed: ${matching.map((d) => domainLabel(d)).join(", ")}`);
   }
 
   return guidelines;
@@ -438,7 +497,7 @@ export default function scopedGuardedTools(pi: ExtensionAPI) {
       if (rules) {
         console.log(`${chalk.blue("[file-permissions]")} Loaded ${configLabel(rules)}`);
         for (const domain of rules.domains) {
-          console.log(`  ${domain.raw} → [${[...domain.permissions].join(", ")}]`);
+          console.log(`  ${domainLabel(domain)} → [${[...domain.permissions].join(", ")}]`);
         }
         console.log("  Everything not listed is denied.");
         console.log(" ");
