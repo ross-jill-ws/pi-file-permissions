@@ -281,33 +281,34 @@ function findMatchingDomain(rules: PermissionRules, targetPath: string): Domain 
 }
 
 function evaluateAccess(rules: PermissionRules, toolName: GuardedToolName, targetPath: string, cwd: string): { allowed: boolean; reason?: string } {
-  // Everything in the project folder (cwd) has full permission
-  if (isSameOrDescendant(normalizePath(cwd), targetPath)) {
-    return { allowed: true };
-  }
-
-  // ~/.pi always has full permission
-  const piDir = normalizePath(path.join(os.homedir(), ".pi"));
-  if (isSameOrDescendant(piDir, targetPath)) {
-    return { allowed: true };
-  }
-
+  // 1. Explicit domain match takes precedence over default auto-allow.
+  //    This lets a config restrict the cwd itself (or any ancestor of cwd).
   const domain = findMatchingDomain(rules, targetPath);
-  if (!domain) {
-    return {
-      allowed: false,
-      reason: `Path "${targetPath}" is not within any allowed domain in ${rules.configPath}`,
-    };
-  }
-
-  if (!domain.permissions.has(toolName)) {
+  if (domain) {
+    if (domain.permissions.has(toolName)) {
+      return { allowed: true };
+    }
     return {
       allowed: false,
       reason: `"${toolName}" is not permitted on "${domain.raw}" (allowed: ${[...domain.permissions].join(", ")})`,
     };
   }
 
-  return { allowed: true };
+  // 2. Default auto-allow: everything in the project folder (cwd) is accessible
+  if (isSameOrDescendant(normalizePath(cwd), targetPath)) {
+    return { allowed: true };
+  }
+
+  // 3. Default auto-allow: ~/.pi is accessible
+  const piDir = normalizePath(path.join(os.homedir(), ".pi"));
+  if (isSameOrDescendant(piDir, targetPath)) {
+    return { allowed: true };
+  }
+
+  return {
+    allowed: false,
+    reason: `Path "${targetPath}" is not within any allowed domain in ${rules.configPath}`,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -365,7 +366,8 @@ function buildSystemPromptNotice(rules: PermissionRules): string {
     "Only the following paths and tools are allowed:",
     ...domainLines,
     "",
-    "Everything in the current project folder and ~/.pi is always accessible.",
+    "By default, everything in the current project folder and ~/.pi is accessible.",
+    "However, if a configured domain explicitly covers a path (including the project folder itself or any ancestor of it), the domain's permissions take precedence over this default.",
     "Everything else is denied.",
     "When searching for a file, you MUST search ALL domains that have find permission, not just some of them. Do not skip a domain just because it lacks read or write permission.",
     "If a tool reports a permission restriction, NEVER try a workaround via bash, alternate tools, broader parent directories, globbing, or search/discovery commands.",
