@@ -83,6 +83,19 @@ function stripAtPrefix(value: string): string {
   return value.startsWith("@") ? value.slice(1) : value;
 }
 
+/** Expand a leading `~` or `~/` to the user's home directory. */
+function expandTilde(value: string): string {
+  if (value === "~") return os.homedir();
+  if (value.startsWith("~/")) return path.join(os.homedir(), value.slice(2));
+  return value;
+}
+
+/** Resolve a tool-supplied path: strip @ prefix, expand ~, and resolve against cwd. */
+function resolveToolPath(rawPath: string, cwd: string): string {
+  const cleaned = expandTilde(stripAtPrefix(rawPath.trim()));
+  return normalizePath(path.resolve(cwd, cleaned));
+}
+
 function isSameOrDescendant(parent: string, target: string): boolean {
   return target === parent || target.startsWith(`${parent}/`);
 }
@@ -168,16 +181,9 @@ function parseRawDomains(rawDomains: RawDomain[], cwd: string, comments: string[
       throw new Error("Each domain must have a 'path' string");
     }
 
-    // Expand ~ to home directory, resolve relative paths against cwd
-    let resolvedPath = entry.path.trim();
-    if (resolvedPath.startsWith("~/") || resolvedPath === "~") {
-      resolvedPath = path.join(os.homedir(), resolvedPath.slice(1));
-    } else if (!path.isAbsolute(resolvedPath)) {
-      resolvedPath = path.resolve(cwd, resolvedPath);
-    }
-
     domains.push({
-      path: normalizePath(resolvedPath),
+      // expand ~, resolve relative paths against cwd, normalize
+      path: resolveToolPath(entry.path, cwd),
       raw: entry.path,
       permissions: validatePermissions(entry.permissions, entry.path),
       comment: comments[i] || undefined,
@@ -258,12 +264,12 @@ function getTargetPath(toolName: GuardedToolName, input: Record<string, unknown>
       if (typeof input.path !== "string" || input.path.trim().length === 0) {
         return null;
       }
-      return normalizePath(path.resolve(cwd, stripAtPrefix(input.path)));
+      return resolveToolPath(input.path, cwd);
 
     case "find":
     case "grep":
     case "ls":
-      return normalizePath(path.resolve(cwd, stripAtPrefix(rawPath)));
+      return resolveToolPath(rawPath, cwd);
   }
 }
 
@@ -338,8 +344,7 @@ function validateBashCommand(command: string): { allowed: boolean; reason?: stri
 // ---------------------------------------------------------------------------
 
 function configLabel(rules: PermissionRules): string {
-  const base = path.basename(rules.configPath);
-  return base === "persona.yaml" ? `${base} (domain)` : base;
+  return path.basename(rules.configPath);
 }
 
 function domainLabel(domain: Domain): string {
