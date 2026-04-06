@@ -46,7 +46,7 @@ type RawDomain = {
 };
 
 type RawConfig = {
-  domains: RawDomain[];
+  domains: RawDomain[] | null;
 };
 
 type Domain = {
@@ -197,14 +197,16 @@ async function loadRules(cwd: string): Promise<LoadedRules> {
       throw new Error("Top-level YAML document must be a mapping");
     }
 
-    if (!Array.isArray(parsed.domains)) {
-      throw new Error("Expected a 'domains' array in config");
+    // null (domains:) and [] (domains: []) both mean "only defaults accessible"
+    if (parsed.domains !== null && !Array.isArray(parsed.domains)) {
+      throw new Error("'domains' must be an array");
     }
+    const rawDomains = parsed.domains ?? [];
 
     const comments = extractDomainComments(raw, "domains");
     return {
       fingerprint: raw,
-      rules: { configPath, domains: parseRawDomains(parsed.domains, cwd, comments) },
+      rules: { configPath, domains: parseRawDomains(rawDomains, cwd, comments) },
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
@@ -222,14 +224,17 @@ async function loadRules(cwd: string): Promise<LoadedRules> {
       return { rules: null, fingerprint: null };
     }
 
-    if (!Array.isArray(parsed.domains)) {
+    // Key absent entirely → no restrictions on this persona
+    if (!("domains" in parsed)) {
       return { rules: null, fingerprint: null };
     }
+    // Key present (even null/empty) → enforce; null and [] both mean defaults only
+    const rawDomains = Array.isArray(parsed.domains) ? (parsed.domains as RawDomain[]) : [];
 
     const comments = extractDomainComments(raw, "domains");
     return {
       fingerprint: raw,
-      rules: { configPath: personaPath, domains: parseRawDomains(parsed.domains as RawDomain[], cwd, comments) },
+      rules: { configPath: personaPath, domains: parseRawDomains(rawDomains, cwd, comments) },
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {

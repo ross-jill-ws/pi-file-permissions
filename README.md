@@ -100,7 +100,9 @@ The `domains` array follows exactly the same structure as in `file-permissions.y
 
 - **Only "allow" semantics** — listed paths get the listed permissions; everything else is denied
 - **No config file** — everything is allowed, pi runs normally with no modifications
-- **`file-permissions.yaml` takes priority** — if both `file-permissions.yaml` and a `persona.yaml` with a `domain` key are present, `file-permissions.yaml` is used
+- **Empty `domains`** — `domains:` or `domains: []` means no extra paths are allowed; only the project root and `~/.pi` remain accessible
+- **`persona.yaml` without `domains`** — if the key is absent entirely, no restrictions apply (the file is treated as a plain persona config)
+- **`file-permissions.yaml` takes priority** — if both files are present and `file-permissions.yaml` is valid, `persona.yaml` is ignored
 - **Project root (cwd)** — always has full permission regardless of config
 - **`~/.pi`** — always has full permission (pi's own config directory)
 - **Most specific wins** — if a path matches multiple domains, the longest (most specific) path takes precedence
