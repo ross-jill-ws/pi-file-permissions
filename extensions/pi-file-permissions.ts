@@ -19,6 +19,7 @@ import chalk from "chalk";
 // ---------------------------------------------------------------------------
 
 const CONFIG_RELATIVE_PATH = "./file-permissions.yaml";
+const PERSONA_RELATIVE_PATH = "./persona.yaml";
 const GUARDED_TOOLS = ["read", "write", "edit", "find", "grep", "ls"] as const;
 const OVERRIDDEN_TOOL_NAMES = ["read", "write", "edit", "find", "grep", "ls", "bash"] as const;
 const BASH_FORBIDDEN_COMMANDS = ["find", "grep", "rg", "ls", "tree", "fd", "ag", "ack", "locate"] as const;
@@ -108,9 +109,33 @@ function validatePermissions(perms: unknown, domainPath: string): Set<GuardedToo
   return result;
 }
 
-async function loadRules(cwd: string): Promise<LoadedRules> {
-  const configPath = path.join(cwd, CONFIG_RELATIVE_PATH);
+function parseRawDomains(rawDomains: RawDomain[], cwd: string): Domain[] {
+  const domains: Domain[] = [];
+  for (const entry of rawDomains) {
+    if (typeof entry !== "object" || entry === null || typeof entry.path !== "string") {
+      throw new Error("Each domain must have a 'path' string");
+    }
 
+    // Expand ~ to home directory, resolve relative paths against cwd
+    let resolvedPath = entry.path.trim();
+    if (resolvedPath.startsWith("~/") || resolvedPath === "~") {
+      resolvedPath = path.join(os.homedir(), resolvedPath.slice(1));
+    } else if (!path.isAbsolute(resolvedPath)) {
+      resolvedPath = path.resolve(cwd, resolvedPath);
+    }
+
+    domains.push({
+      path: normalizePath(resolvedPath),
+      raw: entry.path,
+      permissions: validatePermissions(entry.permissions, entry.path),
+    });
+  }
+  return domains;
+}
+
+async function loadRules(cwd: string): Promise<LoadedRules> {
+  // 1. Try file-permissions.yaml first
+  const configPath = path.join(cwd, CONFIG_RELATIVE_PATH);
   try {
     const raw = await readFile(configPath, "utf8");
     const parsed = YAML.parse(raw) as RawConfig;
@@ -123,30 +148,33 @@ async function loadRules(cwd: string): Promise<LoadedRules> {
       throw new Error("Expected a 'domains' array in config");
     }
 
-    const domains: Domain[] = [];
-    for (const entry of parsed.domains) {
-      if (typeof entry !== "object" || entry === null || typeof entry.path !== "string") {
-        throw new Error("Each domain must have a 'path' string");
-      }
+    return {
+      fingerprint: raw,
+      rules: { configPath, domains: parseRawDomains(parsed.domains, cwd) },
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
 
-      // Expand ~ to home directory, resolve relative paths against cwd
-      let resolvedPath = entry.path.trim();
-      if (resolvedPath.startsWith("~/") || resolvedPath === "~") {
-        resolvedPath = path.join(os.homedir(), resolvedPath.slice(1));
-      } else if (!path.isAbsolute(resolvedPath)) {
-        resolvedPath = path.resolve(cwd, resolvedPath);
-      }
+  // 2. Fall back to persona.yaml (pi-teammate) — check for a `domain` array
+  const personaPath = path.join(cwd, PERSONA_RELATIVE_PATH);
+  try {
+    const raw = await readFile(personaPath, "utf8");
+    const parsed = YAML.parse(raw) as Record<string, unknown>;
 
-      domains.push({
-        path: normalizePath(resolvedPath),
-        raw: entry.path,
-        permissions: validatePermissions(entry.permissions, entry.path),
-      });
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return { rules: null, fingerprint: null };
+    }
+
+    if (!Array.isArray(parsed.domain)) {
+      return { rules: null, fingerprint: null };
     }
 
     return {
       fingerprint: raw,
-      rules: { configPath, domains },
+      rules: { configPath: personaPath, domains: parseRawDomains(parsed.domain as RawDomain[], cwd) },
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -208,7 +236,7 @@ function evaluateAccess(rules: PermissionRules, toolName: GuardedToolName, targe
   if (!domain) {
     return {
       allowed: false,
-      reason: `Path "${targetPath}" is not within any allowed domain in ${CONFIG_RELATIVE_PATH}`,
+      reason: `Path "${targetPath}" is not within any allowed domain in ${rules.configPath}`,
     };
   }
 
@@ -248,8 +276,13 @@ function validateBashCommand(command: string): { allowed: boolean; reason?: stri
 // Summary / prompt helpers
 // ---------------------------------------------------------------------------
 
+function configLabel(rules: PermissionRules): string {
+  const base = path.basename(rules.configPath);
+  return base === "persona.yaml" ? `${base} (domain)` : base;
+}
+
 function buildPermissionSummary(rules: PermissionRules): string {
-  const lines = [`File permissions active from ${CONFIG_RELATIVE_PATH}:`];
+  const lines = [`File permissions active from ${configLabel(rules)}:`];
   for (const domain of rules.domains) {
     lines.push(`  ${domain.raw} → [${[...domain.permissions].join(", ")}]`);
   }
@@ -264,7 +297,7 @@ function buildSystemPromptNotice(rules: PermissionRules): string {
 
   return [
     "## File Permission Policy",
-    `Permissions are controlled by ${CONFIG_RELATIVE_PATH}.`,
+    `Permissions are controlled by ${configLabel(rules)}.`,
     "Only the following paths and tools are allowed:",
     ...domainLines,
     "",
@@ -289,7 +322,7 @@ function buildToolDescription(baseDesc: string, toolName: GuardedToolName, rules
 function createPromptGuidelines(toolName: GuardedToolName, rules: PermissionRules): string[] {
   const matching = rules.domains.filter((d) => d.permissions.has(toolName));
   const guidelines = [
-    `Only use this tool on paths allowed by ${CONFIG_RELATIVE_PATH}.`,
+    `Only use this tool on paths allowed by ${configLabel(rules)}.`,
     "If blocked by permissions, stop and explain the restriction.",
     "Never use bash or another tool as a workaround for a denied path.",
   ];
@@ -329,42 +362,42 @@ function registerScopedOverrides(pi: ExtensionAPI, cwd: string, rules: Permissio
   pi.registerTool({
     ...readTool,
     description: buildToolDescription("Read file contents.", "read", rules),
-    promptSnippet: `Read file contents only on permitted paths from ${CONFIG_RELATIVE_PATH}.`,
+    promptSnippet: `Read file contents only on permitted paths from ${configLabel(rules)}.`,
     promptGuidelines: createPromptGuidelines("read", rules),
   });
 
   pi.registerTool({
     ...writeTool,
     description: buildToolDescription("Create or overwrite files.", "write", rules),
-    promptSnippet: `Create or overwrite files only on permitted paths from ${CONFIG_RELATIVE_PATH}.`,
+    promptSnippet: `Create or overwrite files only on permitted paths from ${configLabel(rules)}.`,
     promptGuidelines: createPromptGuidelines("write", rules),
   });
 
   pi.registerTool({
     ...editTool,
     description: buildToolDescription("Edit a single file using exact text replacement.", "edit", rules),
-    promptSnippet: `Edit files only on permitted paths from ${CONFIG_RELATIVE_PATH}.`,
+    promptSnippet: `Edit files only on permitted paths from ${configLabel(rules)}.`,
     promptGuidelines: createPromptGuidelines("edit", rules),
   });
 
   pi.registerTool({
     ...findTool,
     description: buildToolDescription("Find files by glob pattern.", "find", rules),
-    promptSnippet: `Find filenames only inside permitted paths from ${CONFIG_RELATIVE_PATH}.`,
+    promptSnippet: `Find filenames only inside permitted paths from ${configLabel(rules)}.`,
     promptGuidelines: createPromptGuidelines("find", rules),
   });
 
   pi.registerTool({
     ...grepTool,
     description: buildToolDescription("Search file contents with ripgrep.", "grep", rules),
-    promptSnippet: `Search file contents only inside permitted paths from ${CONFIG_RELATIVE_PATH}.`,
+    promptSnippet: `Search file contents only inside permitted paths from ${configLabel(rules)}.`,
     promptGuidelines: createPromptGuidelines("grep", rules),
   });
 
   pi.registerTool({
     ...lsTool,
     description: buildToolDescription("List directory contents.", "ls", rules),
-    promptSnippet: `List directories only inside permitted paths from ${CONFIG_RELATIVE_PATH}.`,
+    promptSnippet: `List directories only inside permitted paths from ${configLabel(rules)}.`,
     promptGuidelines: createPromptGuidelines("ls", rules),
   });
 
@@ -403,19 +436,19 @@ export default function scopedGuardedTools(pi: ExtensionAPI) {
     try {
       const rules = await refreshOverrides(ctx.cwd);
       if (rules) {
-        console.log(`${chalk.blue("[file-permissions]")} Loaded ${CONFIG_RELATIVE_PATH}`);
+        console.log(`${chalk.blue("[file-permissions]")} Loaded ${configLabel(rules)}`);
         for (const domain of rules.domains) {
           console.log(`  ${domain.raw} → [${[...domain.permissions].join(", ")}]`);
         }
         console.log("  Everything not listed is denied.");
         console.log(" ");
       } else {
-        console.log(`${chalk.blue("[file-permissions]")} ${CONFIG_RELATIVE_PATH} not found — all paths allowed\n`);
+        console.log(`${chalk.blue("[file-permissions]")} ${CONFIG_RELATIVE_PATH} / ${PERSONA_RELATIVE_PATH} not found — all paths allowed\n`);
       }
     } catch (error) {
-      console.log(`${chalk.red("[file-permissions]")} Failed to load ${CONFIG_RELATIVE_PATH}: ${(error as Error).message}\n`);
+      console.log(`${chalk.red("[file-permissions]")} Failed to load permissions config: ${(error as Error).message}\n`);
       if (ctx.hasUI) {
-        ctx.ui.notify(`Failed to load ${CONFIG_RELATIVE_PATH}: ${(error as Error).message}`, "error");
+        ctx.ui.notify(`Failed to load permissions config: ${(error as Error).message}`, "error");
       }
     }
   });
@@ -444,7 +477,7 @@ export default function scopedGuardedTools(pi: ExtensionAPI) {
         ctx.ui.notify(buildPermissionSummary(rules), "info");
       }
     } catch (error) {
-      ctx.ui.notify(`Failed to load ${CONFIG_RELATIVE_PATH}: ${(error as Error).message}`, "error");
+      ctx.ui.notify(`Failed to load permissions config: ${(error as Error).message}`, "error");
     }
   });
 
@@ -453,7 +486,7 @@ export default function scopedGuardedTools(pi: ExtensionAPI) {
     try {
       rules = await refreshOverrides(ctx.cwd);
     } catch (error) {
-      const reason = `Failed to parse ${CONFIG_RELATIVE_PATH}: ${(error as Error).message}`;
+      const reason = `Failed to parse permissions config: ${(error as Error).message}`;
       if (ctx.hasUI) {
         ctx.ui.notify(reason, "error");
       }

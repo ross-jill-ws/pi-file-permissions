@@ -53,6 +53,8 @@ For `bash`, the extension checks the command string for forbidden subcommands (l
 
 ## Usage
 
+### Option A: `file-permissions.yaml`
+
 Create a `file-permissions.yaml` in your project root:
 
 ```yaml
@@ -73,10 +75,32 @@ Each `path` must be a path to a folder or file. The domain covers the path itsel
 - **Relative** — `./local-docs` (resolved against project root)
 - **Home directory** — `~/data/reports` (expands `~` to `$HOME`)
 
+### Option B: `persona.yaml` (pi-teammate)
+
+If you're using [pi-teammate](https://github.com/ross-jill-ws/pi-teammate) — a peer-network multi-agent extension for pi — each agent already has a `persona.yaml` in its working directory. You can embed file permissions directly in that file using a `domain` key, eliminating the need for a separate `file-permissions.yaml`:
+
+```yaml
+name: "Drew"
+provider: "anthropic"
+model: "claude-opus-4-6"
+description: >
+  Fullstack developer. Builds UI components and API integrations.
+systemPrompt: >
+  You are a senior fullstack developer.
+domain:
+  - path: /Users/me/projects/frontend
+    permissions: [read, write, edit, find, grep, ls]
+  - path: /Users/me/projects/shared-lib
+    permissions: [read, find, grep]
+```
+
+The `domain` array follows exactly the same structure as the `domains` array in `file-permissions.yaml`. `file-permissions.yaml` takes priority if both files are present.
+
 ### Rules
 
 - **Only "allow" semantics** — listed paths get the listed permissions; everything else is denied
 - **No config file** — everything is allowed, pi runs normally with no modifications
+- **`file-permissions.yaml` takes priority** — if both `file-permissions.yaml` and a `persona.yaml` with a `domain` key are present, `file-permissions.yaml` is used
 - **Project root (cwd)** — always has full permission regardless of config
 - **`~/.pi`** — always has full permission (pi's own config directory)
 - **Most specific wins** — if a path matches multiple domains, the longest (most specific) path takes precedence
