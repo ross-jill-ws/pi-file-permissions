@@ -513,8 +513,6 @@ export default function scopedGuardedTools(pi: ExtensionAPI) {
         }
         console.log("  Everything not listed is denied.");
         console.log(" ");
-      } else {
-        console.log(`${chalk.blue("[file-permissions]")} ${CONFIG_RELATIVE_PATH} / ${PERSONA_RELATIVE_PATH} not found — all paths allowed\n`);
       }
     } catch (error) {
       console.log(`${chalk.red("[file-permissions]")} Failed to load permissions config: ${(error as Error).message}\n`);

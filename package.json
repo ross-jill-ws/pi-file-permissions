@@ -1,15 +1,19 @@
 {
   "name": "pi-file-permissions",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "Pi extension that enforces file-level permissions via a YAML config. Controls which paths each tool (read, write, edit, find, grep, ls) can access.",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/ross-jill-ws/pi-file-permissions"
   },
   "pi": {
-    "extensions": ["./extensions"]
+    "extensions": [
+      "./extensions"
+    ]
   },
   "dependencies": {
     "chalk": "^5.6.2",
