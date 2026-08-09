@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   createBashTool,
   createEditTool,
@@ -10,7 +10,7 @@ import {
   createLsTool,
   createReadTool,
   createWriteTool,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import YAML from "yaml";
 import chalk from "chalk";
 
